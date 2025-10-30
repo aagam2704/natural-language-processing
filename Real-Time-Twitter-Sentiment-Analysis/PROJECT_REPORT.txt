@@ -3,7 +3,7 @@ Real-Time Twitter Sentiment Analysis — Project Report
 Repository: Real-Time-Twitter-Sentiment-Analysis
 Location: root of project
 Date: 2025-10-28
-Prepared by: automated assistant (pair-programming session)
+Prepared by: Aagam Jain
 
 1) Project overview
 
