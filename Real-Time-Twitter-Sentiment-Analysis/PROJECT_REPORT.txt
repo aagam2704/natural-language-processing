@@ -1,0 +1,187 @@
+Real-Time Twitter Sentiment Analysis — Project Report
+
+Repository: Real-Time-Twitter-Sentiment-Analysis
+Location: root of project
+Date: 2025-10-28
+Prepared by: automated assistant (pair-programming session)
+
+1) Project overview
+
+This project implements a real-time Twitter sentiment analysis application using:
+- Django (web dashboard)
+- Kafka (for streaming tweets)
+- PySpark ML pipeline (trained logistic regression pipeline saved under model directories)
+- MongoDB (storage for processed tweets with predicted sentiment)
+- A producer that reads validation CSV and sends tweets to Kafka
+- A consumer (PySpark application) that reads Kafka, applies the Spark pipeline, and writes results to MongoDB
+
+Top-level structure (relevant):
+- Django-Dashboard/: Django application and templates
+- Kafka-PySpark/: Kafka producer and PySpark consumer scripts
+- ML PySpark Model/: saved Spark model artifacts
+- zk-single-kafka-single.yml: docker-compose file for Zookeeper & Kafka
+- requirements.txt: Python dependencies
+
+2) What I did during the session (summary)
+
+- Created and activated a Python virtual environment and installed dependencies from `requirements.txt`.
+- Launched Kafka and Zookeeper via `zk-single-kafka-single.yml` using Docker Compose.
+- Detected that MongoDB was not running and started it as a Docker container (image `mongo:latest`).
+- Fixed a CSV encoding issue in `producer-validation-tweets.py` by opening the CSV with `encoding='utf-8'`.
+- Replaced an incompatible `kafka` Python package with `kafka-python` to avoid syntax errors in the Kafka client.
+- Found that PySpark requires Java. You installed Temurin/Java. I set JAVA_HOME for the session and used it to attempt to run the PySpark consumer.
+- Encountered Windows-specific Spark/Hadoop native issues (missing `winutils.exe` / HADOOP_HOME) and Spark pipeline metadata path issues when loading model on Windows.
+- To make the web UI usable immediately, implemented a safe fallback classifier in `dashboard/consumer_user.py` which lazy-loads Spark and falls back to a light rule-based classifier when Spark fails.
+- Seeded MongoDB with 1000 sample documents using a `scripts/seed_mongo.py` helper (used fallback classifier for seeding) so the dashboard shows data immediately.
+- Added `scripts/check_mongo.py` to check MongoDB counts and sample documents.
+- Added `scripts/start_django.ps1` helper to start Django with venv + JAVA_HOME in a new PowerShell window.
+
+3) Commands used (Windows PowerShell examples)
+
+Create virtualenv and install deps:
+
+```powershell
+cd "C:\Users\Aagam\OneDrive\Desktop\big_data_project\Real-Time-Twitter-Sentiment-Analysis"
+python -m venv venv
+.\venv\Scripts\activate.ps1
+pip install -r requirements.txt
+```
+
+Start Kafka/Zookeeper (docker-compose):
+
+```powershell
+docker-compose -f zk-single-kafka-single.yml up -d
+```
+
+Start MongoDB (if not installed locally):
+
+```powershell
+docker run -d --name mongodb -p 27017:27017 mongo:latest
+```
+
+Run Django migrations and server:
+
+```powershell
+cd Django-Dashboard
+.\..\venv\Scripts\activate.ps1
+python manage.py migrate
+python manage.py runserver
+```
+
+Start the PySpark consumer (foreground; requires Java and Spark environment):
+
+```powershell
+# set JAVA_HOME for the session (adjust path to your JDK install)
+$env:JAVA_HOME='C:\Program Files\YourJdk'
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+.\venv\Scripts\activate.ps1
+python Kafka-PySpark\consumer-pyspark.py
+```
+
+Start the producer to send validation tweets:
+
+```powershell
+.\venv\Scripts\activate.ps1
+python Kafka-PySpark\producer-validation-tweets.py
+```
+
+Check MongoDB documents (helper script):
+
+```powershell
+.\venv\Scripts\activate.ps1
+python scripts\check_mongo.py
+```
+
+Seed MongoDB quickly (fallback classifier) if pipeline/consumer is not running:
+
+```powershell
+.\venv\Scripts\activate.ps1
+python scripts\seed_mongo.py
+```
+
+4) Issues encountered and fixes
+
+- Kafka Python package incompatibility:
+  - Problem: The `kafka` package in requirements caused a SyntaxError due to using Python reserved words in the package.
+  - Fix: Uninstalled `kafka` and installed `kafka-python` which is compatible: `pip uninstall -y kafka && pip install kafka-python`.
+
+- CSV encoding error in producer:
+  - Problem: `producer-validation-tweets.py` raised a UnicodeDecodeError when reading CSV.
+  - Fix: Open the CSV with `encoding='utf-8'`.
+
+- MongoDB not running:
+  - Problem: Django raised ServerSelectionTimeoutError when trying to reach `localhost:27017`.
+  - Fix: Started MongoDB as a Docker container and created `bigdata_project.tweets` collection.
+
+- PySpark / Java / Windows native errors:
+  - Problem: PySpark requires Java and Hadoop native utilities. When Java was missing, Spark failed to start. After Java install, loading the saved pipeline on Windows produced Hadoop/native/`winutils.exe`-related errors and path-not-found issues for the pipeline metadata.
+  - Mitigation: Implemented a lazy, safe-to-import classify function (`dashboard/consumer_user.py`) that attempts to load Spark at runtime but falls back to a lightweight rule-based classifier when Spark fails. This makes the web UI usable immediately on Windows.
+  - Long-term fix: Install/put `winutils.exe` and set `HADOOP_HOME`, or run the consumer and Spark pipeline on Linux (WSL2 or container) where these issues are less problematic.
+
+5) Files created/modified (important ones)
+
+- Modified: `Django-Dashboard/dashboard/consumer_user.py`
+  - Purpose: Changed classification logic to lazy-load Spark model and added a fast fallback rule-based classifier so the classify endpoint doesn't crash when Spark fails to initialize on Windows. This prevents import-time failures.
+
+- Modified: `Kafka-PySpark/producer-validation-tweets.py`
+  - Purpose: Open CSV with `encoding='utf-8'` to avoid Unicode errors.
+
+- Added: `scripts/seed_mongo.py`
+  - Purpose: Seed MongoDB quickly with classified documents using fallback classifier (for development/demo purposes).
+
+- Added: `scripts/check_mongo.py`
+  - Purpose: Simple script to print the number of documents and show up to 5 sample documents.
+
+- Added: `scripts/start_django.ps1`
+  - Purpose: Helper to launch Django in a PowerShell window with `venv` activated and `JAVA_HOME` set for that session.
+
+6) Verification (what I ran to confirm behavior)
+
+- Verified Docker containers: `docker ps` shows `kafka1` and `zoo1` running.
+- Started MongoDB container and used `mongosh` to create the `tweets` collection.
+- Seeded MongoDB with `python scripts/seed_mongo.py` (1000 documents inserted).
+- Ran `python scripts/check_mongo.py` and confirmed `count: 1000` and sample documents printed.
+- Tested `consumer_user.classify_text("I love this product")` which used the fallback classifier and returned `Positive`.
+- Confirmed Django server starts and the web UI is accessible at `http://127.0.0.1:8000/`.
+
+7) How to reproduce the full working setup (concise)
+
+1. Ensure Docker Desktop is running.
+2. From project root: create & activate venv and install deps.
+3. Start Kafka & Zookeeper:
+   - `docker-compose -f zk-single-kafka-single.yml up -d`
+4. Start MongoDB (docker):
+   - `docker run -d --name mongodb -p 27017:27017 mongo:latest`
+5. Run Django migrations and start server:
+   - `cd Django-Dashboard; .\..\venv\Scripts\activate.ps1; python manage.py migrate; python manage.py runserver`
+6. If you want full Spark-based classification on Windows, install Java + winutils and set HADOOP_HOME; otherwise the fallback classifier will be used by the classify endpoint.
+7. Start consumer (requires Java & Spark configured properly):
+   - set JAVA_HOME in session
+   - `python Kafka-PySpark\consumer-pyspark.py`
+8. Start producer (or run `scripts/seed_mongo.py` if you just want data now):
+   - `python Kafka-PySpark\producer-validation-tweets.py`
+
+8) Next recommended steps / improvements
+
+- Long-term: Run the PySpark consumer and model on Linux (WSL2, Docker, or a cloud VM) to avoid Windows-specific Hadoop/native issues. Containerizing the consumer with a proper Spark image is recommended.
+- Add CI checks and unit tests for small modules (e.g., text cleaning & fallback classifier).
+- Persist configuration (e.g., host/port for Kafka & MongoDB) in a single `config` file or environment variables instead of hard-coded values.
+- Move seeds and helper scripts under a `dev_tools/` folder and add a README with one-line commands.
+- Consider using a lightweight Python-based model or converting the Spark model to ONNX / a format usable by plain Python if you want classification without PySpark dependency.
+
+9) Security / production notes
+
+- SECRET_KEY is present in `Django-Dashboard/BigDataProject/settings.py` and must be changed for production.
+- DEBUG = True; set DEBUG=False for production and configure allowed hosts.
+- Use strong authentication and secure MongoDB and Kafka for production deployments.
+
+10) Where the report is saved
+
+- `PROJECT_REPORT.txt` — location: project root (`Real-Time-Twitter-Sentiment-Analysis/PROJECT_REPORT.txt`)
+
+If you want, I can:
+- Add a `README_DEVELOPER.md` with step-by-step commands, or
+- Attempt to get the full Spark pipeline working on Windows by fetching a compatible `winutils.exe` and wiring `HADOOP_HOME` (I can perform that change here if you allow downloading a small binary), or
+- Containerize the PySpark consumer (create a Dockerfile + docker-compose service) so the entire streaming pipeline runs in containers.
+
+End of report.
